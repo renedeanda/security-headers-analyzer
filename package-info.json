@@ -1,0 +1,17 @@
+{
+  "name": "header-hero",
+  "version": "1.1.0",
+  "description": "A comprehensive HTTP security header analyzer tool for developers",
+  "main": "src/app/page.tsx",
+  "keywords": ["security", "headers", "http", "analysis", "web-security", "csp", "hsts"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/renedeanda/header-hero.git"
+  },
+  "author": "Rene De Anda",
+  "license": "MIT",
+  "homepage": "https://header-hero.vercel.app",
+  "bugs": {
+    "url": "https://github.com/renedeanda/header-hero/issues"
+  }
+}
