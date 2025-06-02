@@ -1,5 +1,6 @@
+'use client'
 import React, { useState, useEffect } from 'react';
-import { Search, Globe, Shield, AlertTriangle, CheckCircle, XCircle, Clock, Info, ExternalLink, Zap, ArrowRight, TrendingUp, Award, Bug } from 'lucide-react';
+import { Search, Globe, Shield, AlertTriangle, CheckCircle, XCircle, Clock, Info, ExternalLink, Zap, ArrowRight, TrendingUp, Award, Bug, Server, MapPin, Timer, Wifi } from 'lucide-react';
 
 // Types
 interface SecurityHeader {
@@ -20,11 +21,25 @@ interface HeaderAnalysis {
   timestamp: string;
   ipAddress?: string;
   method: string;
+  cached?: boolean;
+  cacheAge?: number;
   responseInfo?: {
     status: number;
     statusText: string;
     redirected: boolean;
     finalUrl?: string;
+    ipAddress?: string;
+    headers?: {
+      server?: string;
+      poweredBy?: string;
+      contentType?: string;
+    };
+  };
+  metadata?: {
+    timestamp: string;
+    processingTime: number;
+    method: string;
+    ipAddress?: string;
   };
 }
 
@@ -52,7 +67,7 @@ const HEADER_WEIGHTS = {
   'x-xss-protection': 0                      // Legacy, mostly ignored
 };
 
-// Enhanced CSP analysis with modern security practices
+// Individual analysis functions with proper scoring
 const analyzeCspHeader = (name: string, value?: string, isEnforcing: boolean = true): SecurityHeader => {
   if (!value) {
     return {
@@ -61,114 +76,53 @@ const analyzeCspHeader = (name: string, value?: string, isEnforcing: boolean = t
       status: 'missing',
       score: 0,
       severity: 'critical',
-      explanation: 'Content Security Policy is the most effective defense against XSS attacks and code injection.',
-      recommendation: 'Implement CSP immediately: start with "default-src \'self\'" and gradually add necessary sources'
+      explanation: 'Content Security Policy prevents XSS attacks by controlling resource loading.',
+      recommendation: 'Add CSP header: "default-src \'self\'; script-src \'self\' \'nonce-{random}\'"'
     };
   }
   
-  const baseMultiplier = isEnforcing ? 1.0 : 0.4; // Report-only gets less credit
-  let cspScore = 100;
+  let score = 100;
   let status: 'secure' | 'weak' | 'missing' = 'secure';
   let severity: 'critical' | 'high' | 'medium' | 'low' = 'low';
   
-  // Major security issues (each is a significant vulnerability)
+  // Major security issues
   if (value.includes("'unsafe-inline'")) {
-    cspScore -= 35; // Major vulnerability
+    score -= 35;
     status = 'weak';
     severity = 'high';
   }
   if (value.includes("'unsafe-eval'")) {
-    cspScore -= 35; // Major vulnerability
+    score -= 35;
     status = 'weak';
     severity = 'high';
   }
-  
-  // Wildcard usage without proper restrictions
-  if (value.includes("*") && !value.includes("'nonce-") && !value.includes("'sha256-")) {
-    // Check if it's just data: or blob: which are safer
-    if (!value.match(/\*\s*(;|$)/) && !value.includes("data: *") && !value.includes("blob: *")) {
-      cspScore -= 25; // Significant issue
-      status = 'weak';
-      severity = 'medium';
-    }
-  }
-  
-  // Check for overly permissive policies
-  if (value.includes("'unsafe-hashes'")) {
-    cspScore -= 15;
+  if (value.includes('*') && !value.includes("'nonce-") && !value.includes("'sha256-")) {
+    score -= 25;
     status = 'weak';
     severity = 'medium';
   }
   
-  // Missing important directives
-  const hasDefaultSrc = value.includes('default-src');
-  const hasScriptSrc = value.includes('script-src');
-  const hasStyleSrc = value.includes('style-src');
-  const hasObjectSrc = value.includes('object-src');
-  const hasBaseUri = value.includes('base-uri');
+  // Bonus for good practices
+  if (value.includes("'strict-dynamic'")) score += 10;
+  if (value.includes("'nonce-") || value.includes("'sha256-")) score += 10;
   
-  if (!hasDefaultSrc && !hasScriptSrc) {
-    cspScore -= 20; // No script control
-    severity = 'high';
-  }
-  
-  if (!hasObjectSrc) {
-    cspScore -= 10; // Missing object-src can allow Flash/plugin attacks
-  }
-  
-  if (!hasBaseUri) {
-    cspScore -= 10; // Missing base-uri can allow base tag injection
-  }
-  
-  // Bonus points for security best practices
-  if (value.includes("'strict-dynamic'")) {
-    cspScore += 15; // Modern CSP best practice
-  }
-  
-  if (value.includes("'nonce-") || value.includes("'sha256-") || value.includes("'sha384-") || value.includes("'sha512-")) {
-    cspScore += 10; // Using nonces or hashes
-  }
-  
-  if (value.includes("upgrade-insecure-requests")) {
-    cspScore += 5; // HTTPS enforcement
-  }
-  
-  if (value.includes("block-all-mixed-content")) {
-    cspScore += 5; // Blocks mixed content
-  }
-  
-  // Apply base multiplier for report-only
-  cspScore = Math.round(cspScore * baseMultiplier);
-  
-  let recommendation;
-  if (status === 'weak') {
-    const issues = [];
-    if (value.includes("'unsafe-inline'")) issues.push("remove 'unsafe-inline'");
-    if (value.includes("'unsafe-eval'")) issues.push("remove 'unsafe-eval'");
-    if (value.includes("*") && !value.includes("'nonce-")) issues.push("replace wildcards with specific domains");
-    
-    recommendation = `Critical issues found: ${issues.join(', ')}. Use nonces or hashes for inline content.`;
-  } else if (!isEnforcing) {
-    recommendation = 'Upgrade from report-only to enforcing mode. Monitor violations first, then enforce.';
-    severity = 'medium';
-  } else if (cspScore < 90) {
-    recommendation = 'Good CSP foundation. Consider adding strict-dynamic and removing any remaining unsafe directives.';
+  // Report-only gets reduced score
+  if (!isEnforcing) {
+    score = Math.round(score * 0.6);
+    severity = score < 50 ? 'medium' : 'low';
   }
   
   return {
     name,
     value,
     status,
-    score: Math.max(0, Math.min(100, cspScore)),
+    score: Math.max(0, Math.min(100, score)),
     severity,
-    explanation: isEnforcing 
-      ? 'Controls which resources can load on your page. The most effective protection against XSS and code injection attacks.'
-      : 'Monitors CSP violations without blocking content. Essential for testing policies before enforcement.',
-    recommendation
+    explanation: isEnforcing ? 'Enforces resource loading restrictions to prevent XSS attacks.' : 'Monitors CSP violations without blocking content.',
+    recommendation: status === 'weak' ? 'Remove unsafe directives and use nonces or hashes' : undefined
   };
 };
 
-// Enhanced HSTS analysis
 const analyzeHstsHeader = (value?: string): SecurityHeader => {
   if (!value) {
     return {
@@ -177,15 +131,13 @@ const analyzeHstsHeader = (value?: string): SecurityHeader => {
       status: 'missing',
       score: 0,
       severity: 'high',
-      explanation: 'Forces browsers to use HTTPS connections only. Critical for preventing man-in-the-middle attacks.',
-      recommendation: 'Add HSTS header: "max-age=31536000; includeSubDomains; preload" (start with shorter max-age for testing)'
+      explanation: 'HSTS forces HTTPS connections and prevents protocol downgrade attacks.',
+      recommendation: 'Add HSTS: "max-age=31536000; includeSubDomains; preload"'
     };
   }
   
-  let score = 70; // Base score for having HSTS
+  let score = 70; // Base score
   let status: 'secure' | 'weak' | 'missing' = 'secure';
-  let severity: 'critical' | 'high' | 'medium' | 'low' = 'low';
-  let recommendation;
   
   // Parse max-age
   const maxAgeMatch = value.match(/max-age=(\d+)/);
@@ -194,43 +146,185 @@ const analyzeHstsHeader = (value?: string): SecurityHeader => {
   if (maxAge < 86400) { // Less than 1 day
     score = 30;
     status = 'weak';
-    severity = 'medium';
-    recommendation = 'Increase max-age to at least 1 year (31536000 seconds) for better security';
-  } else if (maxAge < 2592000) { // Less than 30 days
-    score = 50;
-    status = 'weak';
-    severity = 'medium';
-    recommendation = 'Consider increasing max-age to 1 year (31536000 seconds)';
-  } else if (maxAge >= 31536000) { // 1 year or more
+  } else if (maxAge >= 31536000) { // 1 year+
     score = 85;
   }
   
-  // Check for includeSubDomains
-  if (value.includes('includeSubDomains')) {
-    score += 10;
-  } else {
-    recommendation = (recommendation || '') + ' Add includeSubDomains to protect all subdomains.';
-  }
-  
-  // Check for preload
-  if (value.includes('preload')) {
-    score += 5;
-  } else if (score >= 80) {
-    recommendation = (recommendation || '') + ' Consider adding preload directive and submitting to HSTS preload list.';
-  }
+  if (value.includes('includeSubDomains')) score += 10;
+  if (value.includes('preload')) score += 5;
   
   return {
     name: 'Strict-Transport-Security',
     value,
     status,
     score: Math.min(100, score),
-    severity,
-    explanation: 'Forces browsers to use HTTPS connections only. Prevents downgrade attacks and cookie hijacking.',
-    recommendation
+    severity: status === 'weak' ? 'medium' : 'low',
+    explanation: 'Enforces HTTPS and prevents man-in-the-middle attacks.',
+    recommendation: status === 'weak' ? 'Increase max-age and add includeSubDomains' : undefined
   };
 };
 
-// Enhanced header analysis with improved scoring
+const analyzeFrameOptions = (value?: string): SecurityHeader => {
+  if (!value) {
+    return {
+      name: 'X-Frame-Options',
+      value,
+      status: 'missing',
+      score: 0,
+      severity: 'medium',
+      explanation: 'Prevents clickjacking by controlling iframe embedding.',
+      recommendation: 'Add X-Frame-Options: DENY or SAMEORIGIN'
+    };
+  }
+  
+  const lowerValue = value.toLowerCase();
+  const isSecure = lowerValue === 'deny' || lowerValue === 'sameorigin';
+  
+  return {
+    name: 'X-Frame-Options',
+    value,
+    status: isSecure ? 'secure' : 'weak',
+    score: isSecure ? 100 : 40,
+    severity: isSecure ? 'low' : 'medium',
+    explanation: 'Controls whether your site can be framed by other sites.',
+    recommendation: !isSecure ? 'Use DENY or SAMEORIGIN instead of permissive values' : undefined
+  };
+};
+
+const analyzeContentTypeOptions = (value?: string): SecurityHeader => {
+  const isSecure = value?.toLowerCase() === 'nosniff';
+  
+  return {
+    name: 'X-Content-Type-Options',
+    value,
+    status: isSecure ? 'secure' : 'missing',
+    score: isSecure ? 100 : 0,
+    severity: isSecure ? 'low' : 'medium',
+    explanation: 'Prevents MIME-sniffing attacks by enforcing declared content types.',
+    recommendation: !isSecure ? 'Set X-Content-Type-Options: nosniff' : undefined
+  };
+};
+
+const analyzeReferrerPolicy = (value?: string): SecurityHeader => {
+  if (!value) {
+    return {
+      name: 'Referrer-Policy',
+      value,
+      status: 'missing',
+      score: 0,
+      severity: 'low',
+      explanation: 'Controls referrer information sent with requests.',
+      recommendation: 'Set Referrer-Policy: strict-origin-when-cross-origin'
+    };
+  }
+  
+  // Score based on privacy level
+  let score = 100;
+  let status: 'secure' | 'weak' | 'missing' = 'secure';
+  
+  const lowerValue = value.toLowerCase();
+  if (lowerValue.includes('unsafe-url') || lowerValue === 'origin-when-cross-origin') {
+    score = 60;
+    status = 'weak';
+  }
+  
+  return {
+    name: 'Referrer-Policy',
+    value,
+    status,
+    score,
+    severity: status === 'weak' ? 'medium' : 'low',
+    explanation: 'Controls how much referrer information is shared.',
+    recommendation: status === 'weak' ? 'Use more restrictive policy like strict-origin-when-cross-origin' : undefined
+  };
+};
+
+const analyzePermissionsPolicy = (value?: string): SecurityHeader => {
+  if (!value) {
+    return {
+      name: 'Permissions-Policy',
+      value,
+      status: 'missing',
+      score: 0,
+      severity: 'low',
+      explanation: 'Controls browser feature access to reduce attack surface.',
+      recommendation: 'Add Permissions-Policy to restrict unused features'
+    };
+  }
+  
+  // Count restricted features
+  const restrictedFeatures = ['camera', 'microphone', 'geolocation', 'payment'];
+  const disabledCount = restrictedFeatures.filter(feature => 
+    value.includes(`${feature}=()`)
+  ).length;
+  
+  const score = 70 + (disabledCount / restrictedFeatures.length) * 30;
+  
+  return {
+    name: 'Permissions-Policy',
+    value,
+    status: 'secure',
+    score: Math.round(score),
+    severity: 'low',
+    explanation: 'Controls which browser features can be used.',
+    recommendation: disabledCount < 2 ? 'Consider restricting more features' : undefined
+  };
+};
+
+const analyzeXSSProtection = (value?: string, allHeaders?: Record<string, string>): SecurityHeader => {
+  const hasCsp = allHeaders?.['content-security-policy'];
+  
+  if (!value) {
+    return {
+      name: 'X-XSS-Protection',
+      value,
+      status: hasCsp ? 'secure' : 'missing',
+      score: hasCsp ? 90 : 0,
+      severity: hasCsp ? 'low' : 'medium',
+      explanation: 'Legacy XSS protection. CSP provides better security.',
+      recommendation: hasCsp ? 'Not needed with CSP' : 'Add X-XSS-Protection: 1; mode=block or implement CSP'
+    };
+  }
+  
+  // X-XS-Protection: 0 is actually good if CSP is present
+  if (value === '0' && hasCsp) {
+    return {
+      name: 'X-XSS-Protection',
+      value,
+      status: 'secure',
+      score: 95,
+      severity: 'low',
+      explanation: 'Correctly disabled when CSP is present.',
+      recommendation: undefined
+    };
+  }
+  
+  const isGoodConfig = value === '1; mode=block';
+  
+  return {
+    name: 'X-XSS-Protection',
+    value,
+    status: isGoodConfig ? 'secure' : 'weak',
+    score: isGoodConfig ? 85 : 50,
+    severity: 'low',
+    explanation: 'Legacy browser XSS filtering.',
+    recommendation: !isGoodConfig ? 'Set to "1; mode=block" or implement CSP' : undefined
+  };
+};
+
+const createMissingHeader = (name: string, severity: 'critical' | 'high' | 'medium' | 'low'): SecurityHeader => {
+  return {
+    name,
+    value: undefined,
+    status: 'missing',
+    score: 0,
+    severity,
+    explanation: `${name} header is missing`,
+    recommendation: `Implement ${name} for enhanced security`
+  };
+};
+
+// Enhanced header analysis with better detection
 const analyzeHeader = (name: string, value?: string, allHeaders?: Record<string, string>): SecurityHeader => {
   const lowerName = name.toLowerCase();
   
@@ -242,148 +336,17 @@ const analyzeHeader = (name: string, value?: string, allHeaders?: Record<string,
     case 'strict-transport-security':
       return analyzeHstsHeader(value);
     case 'x-frame-options':
-      return {
-        name: 'X-Frame-Options',
-        value,
-        status: value ? (value.toLowerCase() === 'deny' || value.toLowerCase() === 'sameorigin' ? 'secure' : 'weak') : 'missing',
-        score: value ? (value.toLowerCase() === 'deny' || value.toLowerCase() === 'sameorigin' ? 100 : 40) : 0,
-        severity: value ? (value.toLowerCase() === 'deny' || value.toLowerCase() === 'sameorigin' ? 'low' : 'medium') : 'medium',
-        explanation: 'Prevents your site from being embedded in frames. Essential protection against clickjacking attacks.',
-        recommendation: value ? (value.toLowerCase() === 'allowall' || value.toLowerCase() === 'allow-from' ? 'Use "DENY" or "SAMEORIGIN" instead of permissive values' : undefined) : 'Add X-Frame-Options: DENY (or SAMEORIGIN if you need to embed your own content)'
-      };
+      return analyzeFrameOptions(value);
     case 'x-content-type-options':
-      return {
-        name: 'X-Content-Type-Options',
-        value,
-        status: value?.toLowerCase() === 'nosniff' ? 'secure' : 'missing',
-        score: value?.toLowerCase() === 'nosniff' ? 100 : 0,
-        severity: value ? 'low' : 'medium',
-        explanation: 'Prevents browsers from MIME-sniffing responses. Stops browsers from interpreting files as different content types.',
-        recommendation: value?.toLowerCase() !== 'nosniff' ? 'Set X-Content-Type-Options: nosniff' : undefined
-      };
+      return analyzeContentTypeOptions(value);
     case 'referrer-policy':
-      if (!value) {
-        return {
-          name: 'Referrer-Policy',
-          value,
-          status: 'missing',
-          score: 0,
-          severity: 'low',
-          explanation: 'Controls referrer information sent with requests. Important for privacy and preventing data leakage.',
-          recommendation: 'Set Referrer-Policy to "strict-origin-when-cross-origin" for good privacy without breaking functionality'
-        };
-      }
-      
-      // Score based on privacy level
-      let score = 100;
-      let status: 'secure' | 'weak' | 'missing' = 'secure';
-      let severity: 'critical' | 'high' | 'medium' | 'low' = 'low';
-      
-      const policy = value.toLowerCase();
-      if (policy.includes('unsafe-url') || policy.includes('origin-when-cross-origin')) {
-        score = 60;
-        status = 'weak';
-        severity = 'medium';
-      } else if (policy.includes('no-referrer-when-downgrade')) {
-        score = 70;
-        status = 'weak';
-      }
-      
-      return {
-        name: 'Referrer-Policy',
-        value,
-        status,
-        score,
-        severity,
-        explanation: 'Controls referrer information sent with requests. Protects user privacy and prevents sensitive URL data leakage.',
-        recommendation: status === 'weak' ? 'Use "strict-origin-when-cross-origin" or "no-referrer" for better privacy' : undefined
-      };
-
+      return analyzeReferrerPolicy(value);
     case 'permissions-policy':
-      if (!value) {
-        return {
-          name: 'Permissions-Policy',
-          value,
-          status: 'missing',
-          score: 0,
-          severity: 'low',
-          explanation: 'Controls browser features and APIs. Reduces attack surface by restricting unnecessary capabilities.',
-          recommendation: 'Add Permissions-Policy to disable unused features like "camera=(), microphone=(), geolocation=()"'
-        };
-      }
-      
-      // Score based on restrictiveness
-      let permScore = 70; // Base score for having the header
-      const restrictedFeatures = ['camera', 'microphone', 'geolocation', 'payment', 'usb', 'bluetooth'];
-      const disabledFeatures = restrictedFeatures.filter(feature => 
-        value.includes(`${feature}=()`) || value.includes(`${feature}=none`)
-      );
-      
-      permScore += (disabledFeatures.length / restrictedFeatures.length) * 30;
-      
-      return {
-        name: 'Permissions-Policy',
-        value,
-        status: 'secure',
-        score: Math.round(permScore),
-        severity: 'low',
-        explanation: 'Controls browser features and APIs. Modern replacement for Feature-Policy.',
-        recommendation: disabledFeatures.length < 3 ? 'Consider restricting more features that your site doesn\'t use' : undefined
-      };
-
+      return analyzePermissionsPolicy(value);
     case 'x-xss-protection':
-      const hasCsp = allHeaders?.['content-security-policy'] || allHeaders?.['content-security-policy-report-only'];
-      
-      if (!value) {
-        return {
-          name: 'X-XSS-Protection',
-          value,
-          status: hasCsp ? 'secure' : 'missing',
-          score: hasCsp ? 95 : 0,
-          severity: hasCsp ? 'low' : 'medium',
-          explanation: 'Legacy XSS protection built into browsers. Largely superseded by Content Security Policy.',
-          recommendation: hasCsp 
-            ? 'Not needed with strong CSP - browser XSS protection is less effective than CSP'
-            : 'Add X-XSS-Protection: 1; mode=block OR implement Content Security Policy (recommended)'
-        };
-      }
-      
-      if (value === '0') {
-        return {
-          name: 'X-XSS-Protection',
-          value,
-          status: hasCsp ? 'secure' : 'weak',
-          score: hasCsp ? 100 : 20,
-          severity: hasCsp ? 'low' : 'high',
-          explanation: 'XSS protection explicitly disabled. Only safe when strong CSP is present.',
-          recommendation: hasCsp 
-            ? 'Correct approach - CSP provides better XSS protection than browser filters'
-            : 'Dangerous without CSP! Either enable XSS protection or implement Content Security Policy'
-        };
-      }
-      
-      return {
-        name: 'X-XSS-Protection',
-        value,
-        status: value === '1; mode=block' ? 'secure' : 'weak',
-        score: value === '1; mode=block' ? 85 : 50,
-        severity: 'low',
-        explanation: 'Legacy XSS protection. Modern CSP is more effective and reliable.',
-        recommendation: value !== '1; mode=block'
-          ? 'Set to "1; mode=block" or implement Content Security Policy for better protection'
-          : 'Consider upgrading to Content Security Policy for more comprehensive XSS protection'
-      };
-
+      return analyzeXSSProtection(value, allHeaders);
     default:
-      return {
-        name,
-        value,
-        status: 'missing',
-        score: 0,
-        severity: 'medium',
-        explanation: 'Unknown security header',
-        recommendation: undefined
-      };
+      return createMissingHeader(name, 'medium');
   }
 };
 
@@ -447,7 +410,7 @@ const getGradeTheme = (score: number) => {
   }
 };
 
-// REAL HEADER ANALYSIS using our Next.js API route
+// ENHANCED HEADER ANALYSIS using our improved API route
 const analyzeHeadersReal = async (url: string): Promise<HeaderAnalysis> => {
   const response = await fetch(`/api/analyze-headers?url=${encodeURIComponent(url)}`);
   
@@ -484,9 +447,12 @@ const analyzeHeadersReal = async (url: string): Promise<HeaderAnalysis> => {
     headers,
     rawHeaders: data.headers,
     overallScore,
-    timestamp: data.timestamp,
-    method: 'live-analysis',
-    responseInfo: data.responseInfo
+    timestamp: data.metadata.timestamp,
+    method: 'enhanced-analysis',
+    cached: data.cached || false,
+    cacheAge: data.cacheAge || 0,
+    responseInfo: data.responseInfo,
+    metadata: data.metadata
   };
 };
 
@@ -495,10 +461,21 @@ const getHostnameFromUrl = (url: string): string => {
   try {
     return new URL(url).hostname;
   } catch {
-    // If URL parsing fails, try to extract hostname manually
     const match = url.match(/^(?:https?:\/\/)?([^\/]+)/);
     return match ? match[1] : url;
   }
+};
+
+// Format IP address with location info
+const formatIPAddress = (ip: string) => {
+  if (!ip || ip === 'Unknown') return 'Unknown';
+  
+  // Check if it's IPv6
+  if (ip.includes(':')) {
+    return `${ip} (IPv6)`;
+  }
+  
+  return ip;
 };
 
 // UI Components
@@ -595,6 +572,120 @@ const SecurityCard = ({ header, theme }: { header: SecurityHeader; theme: any })
   );
 };
 
+// Enhanced Server Info Component
+const ServerInfoCard = ({ analysisResult }: { analysisResult: HeaderAnalysis }) => {
+  const { responseInfo, metadata } = analysisResult;
+  
+  return (
+    <div className="bg-white/70 backdrop-blur-sm rounded-2xl border border-gray-200 p-6 shadow-lg">
+      <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+        <Server className="w-5 h-5 text-gray-600" />
+        Server Information
+      </h3>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* IP Address with enhanced display */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-sm text-gray-600">
+            <MapPin className="w-4 h-4" />
+            <span className="font-medium">IP Address</span>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <div className="font-mono text-sm text-gray-900">
+              {formatIPAddress(responseInfo?.ipAddress || metadata?.ipAddress || 'Unknown')}
+            </div>
+          </div>
+        </div>
+
+        {/* Server Software */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-sm text-gray-600">
+            <Server className="w-4 h-4" />
+            <span className="font-medium">Server</span>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <div className="text-sm text-gray-900">
+              {responseInfo?.headers?.server || 'Unknown'}
+            </div>
+          </div>
+        </div>
+
+        {/* Powered By */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-sm text-gray-600">
+            <Zap className="w-4 h-4" />
+            <span className="font-medium">Powered By</span>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <div className="text-sm text-gray-900">
+              {responseInfo?.headers?.poweredBy || 'Not disclosed'}
+            </div>
+          </div>
+        </div>
+
+        {/* Response Time */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-sm text-gray-600">
+            <Timer className="w-4 h-4" />
+            <span className="font-medium">Response Time</span>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <div className="text-sm text-gray-900">
+              {metadata?.processingTime ? `${metadata.processingTime}ms` : 'Unknown'}
+              {analysisResult.cached && (
+                <span className="ml-2 text-xs text-blue-600">(cached {analysisResult.cacheAge}s ago)</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Content Type */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-sm text-gray-600">
+            <Info className="w-4 h-4" />
+            <span className="font-medium">Content Type</span>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <div className="text-sm text-gray-900">
+              {responseInfo?.headers?.contentType || 'Unknown'}
+            </div>
+          </div>
+        </div>
+
+        {/* Connection Status */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-sm text-gray-600">
+            <Wifi className="w-4 h-4" />
+            <span className="font-medium">Status</span>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${
+                responseInfo?.status === 200 ? 'bg-green-500' : 
+                responseInfo?.status && responseInfo.status < 400 ? 'bg-yellow-500' : 
+                'bg-red-500'
+              }`}></div>
+              <span className="text-sm text-gray-900">
+                {responseInfo?.status || 'Unknown'} {responseInfo?.statusText || ''}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      {/* Cache Status */}
+      {analysisResult.cached && (
+        <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex items-center gap-2 text-sm text-blue-800">
+            <Clock className="w-4 h-4" />
+            <span>Results served from cache ({analysisResult.cacheAge} seconds old)</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Main Component
 export default function SecurityHeadersAnalyzer() {
   const [url, setUrl] = useState('');
@@ -642,10 +733,6 @@ export default function SecurityHeadersAnalyzer() {
     if (e.key === 'Enter') {
       handleAnalyze();
     }
-  };
-
-  const formatUrl = (url: string): string => {
-    return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
   };
 
   const criticalIssues = analysisResult?.headers.filter(h => h.severity === 'critical' || (h.status === 'missing' && h.severity === 'high')).length || 0;
@@ -858,6 +945,9 @@ export default function SecurityHeadersAnalyzer() {
                 </div>
               </div>
             </div>
+
+            {/* Server Information Card */}
+            <ServerInfoCard analysisResult={analysisResult} />
 
             {/* Critical Issues Alert */}
             {criticalIssues > 0 && (
