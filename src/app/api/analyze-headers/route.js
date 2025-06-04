@@ -1,7 +1,11 @@
 // app/api/analyze-headers/route.js
-// Enterprise-compatible header analysis with anti-detection measures
+// Improved security while maintaining functionality
 
 import { NextResponse } from 'next/server';
+import { headers } from 'next/headers';
+
+// Simple in-memory rate limiting (for Vercel, consider Upstash Redis for production)
+const rateLimitStore = new Map();
 
 // Realistic browser configurations to avoid detection
 const BROWSER_CONFIGS = [
@@ -26,6 +30,62 @@ const BROWSER_CONFIGS = [
   }
 ];
 
+// Comprehensive logging function
+function logRequest(logData) {
+  const timestamp = new Date().toISOString();
+  const logEntry = {
+    timestamp,
+    level: logData.level || 'INFO',
+    ...logData
+  };
+  
+  // Console log for Vercel logs (viewable in Vercel dashboard)
+  console.log(`[${logEntry.level}] ${timestamp} - ${JSON.stringify(logEntry)}`);
+  
+  // Optional: Send to external logging service
+  console.log(`🔗 Logging to external service: ${process.env.WEBHOOK_LOGGING_URL || 'not configured'}`);
+  if (process.env.WEBHOOK_LOGGING_URL) {
+    // Fire and forget webhook (don't await to avoid slowing down response)
+    fetch(process.env.WEBHOOK_LOGGING_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(logEntry)
+    }).catch(err => console.error('Webhook logging failed:', err));
+  }
+}
+
+// Enhanced rate limiting with better cleanup
+function checkRateLimit(clientIP, userAgent) {
+  const now = Date.now();
+  const minuteKey = `${clientIP}:${Math.floor(now / 60000)}`;
+  
+  // Periodic cleanup (every ~100 requests)
+  if (Math.random() < 0.01) {
+    const cutoff = now - 300000; // 5 minutes ago
+    for (const [key, data] of rateLimitStore.entries()) {
+      if (data.timestamp < cutoff) {
+        rateLimitStore.delete(key);
+      }
+    }
+  }
+
+  const limitData = rateLimitStore.get(minuteKey) || { count: 0, timestamp: now };
+  
+  // More lenient rate limiting: 30 requests per minute
+  if (limitData.count >= 30) {
+    logRequest({
+      level: 'WARN',
+      event: 'rate_limit_exceeded',
+      clientIP,
+      userAgent,
+      requestCount: limitData.count
+    });
+    throw new Error('Rate limit exceeded. Please wait a minute before trying again.');
+  }
+
+  rateLimitStore.set(minuteKey, { count: limitData.count + 1, timestamp: now });
+}
+
 // Get random browser config to avoid fingerprinting
 function getRandomBrowserConfig() {
   return BROWSER_CONFIGS[Math.floor(Math.random() * BROWSER_CONFIGS.length)];
@@ -38,69 +98,129 @@ function randomDelay(min = 100, max = 500) {
   );
 }
 
+// Enhanced but less restrictive URL validation
+function validateAndNormalizeURL(url) {
+  let targetUrl;
+  try {
+    // Handle different URL formats
+    let urlToCheck = url.trim();
+    
+    // Add protocol if missing
+    if (!urlToCheck.startsWith('http://') && !urlToCheck.startsWith('https://')) {
+      urlToCheck = `https://${urlToCheck}`;
+    }
+    
+    targetUrl = new URL(urlToCheck);
+    
+    if (!['http:', 'https:'].includes(targetUrl.protocol)) {
+      throw new Error('Only HTTP and HTTPS protocols are supported');
+    }
+
+    // Enhanced private network detection with more patterns
+    const hostname = targetUrl.hostname.toLowerCase();
+    const privatePatterns = [
+      // IPv4 private ranges
+      /^127\./, /^10\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[01])\./,
+      /^169\.254\./, /^0\.0\.0\.0$/, /^255\.255\.255\.255$/,
+      // IPv6 patterns
+      /^::1$/, /^::ffff:127\./, /^fc00:/, /^fd00:/, /^fe80:/,
+      // Additional localhost variants
+      /^localhost$/i, /^.*\.local$/i, /^.*\.localhost$/i,
+      // Cloud metadata endpoints (AWS, GCP, Azure)
+      /^169\.254\.169\.254$/, /^metadata\.google\.internal$/i,
+      /^169\.254\.169\.254$/, /^100\.100\.100\.200$/
+    ];
+    
+    const blockedHosts = [
+      'localhost', 'local', '0.0.0.0', '127.0.0.1', 'broadcasthost',
+      'ip6-localhost', 'ip6-loopback', 'metadata.google.internal',
+      'instance-data', 'metadata'
+    ];
+    
+    if (blockedHosts.includes(hostname) || privatePatterns.some(pattern => pattern.test(hostname))) {
+      throw new Error('Cannot analyze private, local, or internal addresses');
+    }
+
+    // Basic hostname validation (less restrictive)
+    if (hostname.includes('..') || hostname.length < 3) {
+      throw new Error('Invalid hostname format');
+    }
+
+    // Check for suspicious ports
+    const port = targetUrl.port;
+    if (port && !['80', '443', '8080', '8443'].includes(port)) {
+      logRequest({
+        level: 'WARN',
+        event: 'suspicious_port',
+        hostname,
+        port,
+        url: targetUrl.toString()
+      });
+    }
+
+    return targetUrl;
+
+  } catch (error) {
+    throw new Error(error.message.includes('Cannot analyze') ? error.message : 'Invalid URL format');
+  }
+}
+
 export async function GET(request) {
   const startTime = Date.now();
   
+  // Extract client information for logging
+  const headersList = headers();
+  const clientIP = headersList.get('x-forwarded-for')?.split(',')[0]?.trim() || 
+                   headersList.get('x-real-ip') || 
+                   headersList.get('cf-connecting-ip') || // Cloudflare
+                   'unknown';
+  const userAgent = headersList.get('user-agent') || 'unknown';
+  const referer = headersList.get('referer') || 'direct';
+  const country = headersList.get('cf-ipcountry') || 'unknown'; // Cloudflare country header
+  
   try {
+    // Rate limiting
+    checkRateLimit(clientIP, userAgent);
+
     const { searchParams } = new URL(request.url);
     const url = searchParams.get('url');
     
     if (!url) {
+      logRequest({
+        level: 'WARN',
+        event: 'missing_url_parameter',
+        clientIP,
+        userAgent,
+        referer
+      });
       return NextResponse.json(
         { error: 'URL parameter is required' },
         { status: 400 }
       );
     }
 
-    // Enhanced URL validation and normalization
-    let targetUrl;
-    try {
-      // Handle different URL formats more intelligently
-      let urlToCheck = url.trim();
-      
-      // Add protocol if missing
-      if (!urlToCheck.startsWith('http://') && !urlToCheck.startsWith('https://')) {
-        urlToCheck = `https://${urlToCheck}`;
-      }
-      
-      targetUrl = new URL(urlToCheck);
-      
-      if (!['http:', 'https:'].includes(targetUrl.protocol)) {
-        throw new Error('Only HTTP and HTTPS protocols are supported');
-      }
+    // Validate URL
+    const targetUrl = validateAndNormalizeURL(url);
 
-      // Enhanced private network detection
-      const hostname = targetUrl.hostname.toLowerCase();
-      const privatePatterns = [
-        /^127\./, /^10\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[01])\./,
-        /^169\.254\./, /^::1$/, /^fc00:/, /^fe80:/, /^0\.0\.0\.0$/
-      ];
-      
-      const blockedHosts = ['localhost', 'local', '0.0.0.0', '127.0.0.1'];
-      
-      if (blockedHosts.includes(hostname) || privatePatterns.some(pattern => pattern.test(hostname))) {
-        throw new Error('Cannot analyze private, local, or internal addresses');
-      }
-
-      // Validate hostname format
-      if (hostname.includes('..') || hostname.includes('%') || hostname.length < 3) {
-        throw new Error('Invalid hostname format');
-      }
-
-    } catch (error) {
-      return NextResponse.json(
-        { error: error.message.includes('Cannot analyze') ? error.message : 'Invalid URL format' },
-        { status: 400 }
-      );
-    }
+    // Log successful request start
+    logRequest({
+      level: 'INFO',
+      event: 'analysis_started',
+      clientIP,
+      userAgent,
+      referer,
+      country,
+      targetUrl: targetUrl.toString(),
+      targetHost: targetUrl.hostname
+    });
 
     // Add small delay to appear more human-like
     await randomDelay(200, 800);
 
-    console.log(`🔍 Analyzing: ${targetUrl.toString()}`);
+    console.log(`🔍 Analyzing: ${targetUrl.toString()} from ${clientIP} (${country})`);
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 seconds for enterprise sites
+    const timeoutId = setTimeout(() => controller.abort(), 20000); // Reduced to 20 seconds
     
     let response;
     let lastError;
@@ -110,7 +230,7 @@ export async function GET(request) {
     const methods = [
       { method: 'HEAD', followRedirects: true },
       { method: 'GET', followRedirects: true },
-      { method: 'HEAD', followRedirects: false }, // Some sites block HEAD with redirects
+      { method: 'HEAD', followRedirects: false },
       { method: 'GET', followRedirects: false }
     ];
 
@@ -153,7 +273,6 @@ export async function GET(request) {
           headers,
           signal: controller.signal,
           redirect: followRedirects ? 'follow' : 'manual',
-          // Additional options for enterprise compatibility
           keepalive: false,
           mode: 'cors',
           credentials: 'omit'
@@ -165,15 +284,12 @@ export async function GET(request) {
           break;
         } else if (response.status === 403 || response.status === 429) {
           console.log(`⚠️ ${method} blocked (${response.status}), trying next method...`);
-          // Add longer delay if we're being rate limited
           await randomDelay(1000, 2000);
         }
 
       } catch (error) {
         lastError = error;
         console.log(`⚠️ ${method} failed: ${error.message}`);
-        
-        // Add delay between attempts
         await randomDelay(300, 1000);
       }
     }
@@ -185,13 +301,11 @@ export async function GET(request) {
     }
 
     const processingTime = Date.now() - startTime;
-    console.log(`✅ Analysis completed: ${response.status} ${response.statusText} (${processingTime}ms)`);
 
     // Extract headers with better parsing
     const rawHeaders = {};
     response.headers.forEach((value, key) => {
       const lowerKey = key.toLowerCase();
-      // Handle multiple headers with same name
       if (rawHeaders[lowerKey]) {
         rawHeaders[lowerKey] = Array.isArray(rawHeaders[lowerKey]) 
           ? [...rawHeaders[lowerKey], value]
@@ -201,10 +315,9 @@ export async function GET(request) {
       }
     });
 
-    // Get IP address
+    // Get IP address (keep your existing logic)
     let ipAddress = 'Unknown';
     try {
-      // Try to resolve IP address
       const dnsResponse = await fetch(`https://dns.google/resolve?name=${targetUrl.hostname}&type=A`);
       if (dnsResponse.ok) {
         const dnsData = await dnsResponse.json();
@@ -216,7 +329,6 @@ export async function GET(request) {
       console.log('Could not resolve IP:', error.message);
     }
 
-    // Enhanced response info
     const responseInfo = {
       status: response.status,
       statusText: response.statusText,
@@ -229,7 +341,26 @@ export async function GET(request) {
       }
     };
 
-    console.log(`📊 Found ${Object.keys(rawHeaders).length} headers for ${targetUrl.hostname}`);
+    // Log successful analysis
+    logRequest({
+      level: 'INFO',
+      event: 'analysis_completed',
+      clientIP,
+      userAgent,
+      referer,
+      country,
+      targetUrl: targetUrl.toString(),
+      targetHost: targetUrl.hostname,
+      responseStatus: response.status,
+      responseTime: processingTime,
+      headersFound: Object.keys(rawHeaders).length,
+      serverInfo: rawHeaders.server,
+      ipAddress: ipAddress,
+      redirected: response.redirected,
+      finalUrl: response.url
+    });
+
+    console.log(`📊 Found ${Object.keys(rawHeaders).length} headers for ${targetUrl.hostname} (${processingTime}ms)`);
 
     return NextResponse.json({
       success: true,
@@ -249,7 +380,6 @@ export async function GET(request) {
 
   } catch (error) {
     const processingTime = Date.now() - startTime;
-    console.error(`❌ Analysis failed after ${processingTime}ms:`, error.message);
     
     // Enhanced error categorization
     let errorMessage = error.message;
@@ -257,7 +387,7 @@ export async function GET(request) {
     let category = 'unknown';
 
     if (error.name === 'AbortError') {
-      errorMessage = 'Request timeout - website took too long to respond (25s)';
+      errorMessage = 'Request timeout - website took too long to respond (20s)';
       statusCode = 408;
       category = 'timeout';
     } else if (error.message.includes('ENOTFOUND') || error.message.includes('getaddrinfo')) {
@@ -284,7 +414,30 @@ export async function GET(request) {
       errorMessage = 'Rate limited - website is temporarily blocking requests';
       statusCode = 429;
       category = 'rate-limit';
+    } else if (error.message.includes('Rate limit')) {
+      statusCode = 429;
+      category = 'api-rate-limit';
+    } else if (error.message.includes('Cannot analyze')) {
+      statusCode = 403;
+      category = 'blocked-url';
     }
+
+    // Log error
+    logRequest({
+      level: 'ERROR',
+      event: 'analysis_failed',
+      clientIP,
+      userAgent,
+      referer,
+      country,
+      targetUrl: url,
+      error: errorMessage,
+      category,
+      processingTime,
+      originalError: error.message
+    });
+
+    console.error(`❌ Analysis failed after ${processingTime}ms:`, error.message);
 
     return NextResponse.json(
       { 
@@ -303,6 +456,9 @@ export async function GET(request) {
           'Website is temporarily blocking requests',
           'Wait a few minutes before trying again',
           'This is normal for high-security sites'
+        ] : category === 'api-rate-limit' ? [
+          'You are making requests too quickly',
+          'Please wait a minute before trying again'
         ] : [
           'Check if the website is accessible in your browser',
           'Verify the URL is correct',
