@@ -487,15 +487,15 @@ const GradeCircle = ({ score, theme }: { score: number; theme: any }) => {
   );
 };
 
-const HeaderBadge = ({ header }: { header: SecurityHeader }) => {
+const HeaderBadge = ({ header, onClick }: { header: SecurityHeader; onClick?: () => void }) => {
   const getBadgeStyles = () => {
     switch (header.status) {
       case 'secure':
-        return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+        return 'bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-200';
       case 'weak':
-        return 'bg-amber-100 text-amber-800 border-amber-200';
+        return 'bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-200';
       case 'missing':
-        return 'bg-red-100 text-red-800 border-red-200';
+        return 'bg-red-100 text-red-800 border-red-200 hover:bg-red-200';
     }
   };
 
@@ -511,10 +511,14 @@ const HeaderBadge = ({ header }: { header: SecurityHeader }) => {
   };
 
   return (
-    <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border ${getBadgeStyles()}`}>
+    <button 
+      onClick={onClick}
+      className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer ${getBadgeStyles()}`}
+    >
       {getIcon()}
       {header.name.replace('X-', '').replace('-', ' ')}
-    </span>
+      <Info className="w-3 h-3 ml-1 opacity-60" />
+    </button>
   );
 };
 
@@ -686,6 +690,343 @@ const ServerInfoCard = ({ analysisResult }: { analysisResult: HeaderAnalysis }) 
   );
 };
 
+// Modal Component for Header Details
+const SecurityHeaderModal = ({ 
+  header, 
+  isOpen, 
+  onClose 
+}: { 
+  header: SecurityHeader | null; 
+  isOpen: boolean; 
+  onClose: () => void; 
+}) => {
+  if (!isOpen || !header) return null;
+
+  const getDetailedExplanation = (headerName: string) => {
+    const name = headerName.toLowerCase();
+    
+    switch (name) {
+      case 'content-security-policy':
+        return {
+          purpose: "Content Security Policy (CSP) is a security layer that helps detect and mitigate certain types of attacks, including Cross-Site Scripting (XSS) and data injection attacks.",
+          howItWorks: "CSP works by specifying which resources (scripts, styles, images, etc.) are allowed to load and execute on your website. It uses directives like 'script-src', 'style-src', and 'img-src' to control resource origins.",
+          bestPractices: [
+            "Use 'strict-dynamic' for modern browsers",
+            "Avoid 'unsafe-inline' and 'unsafe-eval'",
+            "Use nonces or hashes for inline scripts/styles",
+            "Start with a restrictive policy and gradually allow necessary sources",
+            "Use 'Content-Security-Policy-Report-Only' for testing"
+          ],
+          commonIssues: [
+            "Too permissive policies with wildcard (*) sources",
+            "Using 'unsafe-inline' which defeats CSP's purpose",
+            "Not including necessary domains for third-party resources"
+          ]
+        };
+      
+      case 'content-security-policy-report-only':
+        return {
+          purpose: "CSP Report-Only header allows you to test Content Security Policy without actually blocking resources. It only reports violations to a specified endpoint.",
+          howItWorks: "This header works exactly like CSP but doesn't enforce the policy. Instead, it sends violation reports to help you understand what would be blocked if the policy were enforced.",
+          bestPractices: [
+            "Use this to test new CSP policies before enforcement",
+            "Set up a reporting endpoint to collect violation data",
+            "Gradually move from Report-Only to enforcing CSP",
+            "Monitor reports to identify false positives"
+          ],
+          commonIssues: [
+            "Forgetting to transition from Report-Only to enforcing",
+            "Not setting up proper violation reporting",
+            "Ignoring violation reports"
+          ]
+        };
+      
+      case 'strict-transport-security':
+        return {
+          purpose: "HTTP Strict Transport Security (HSTS) forces browsers to use secure HTTPS connections instead of HTTP, protecting against man-in-the-middle attacks and protocol downgrade attacks.",
+          howItWorks: "Once a browser receives an HSTS header, it will automatically convert all HTTP requests to HTTPS for the specified domain and duration, even if the user types 'http://' in the address bar.",
+          bestPractices: [
+            "Use a max-age of at least 1 year (31536000 seconds)",
+            "Include 'includeSubDomains' to protect subdomains",
+            "Consider 'preload' directive for maximum security",
+            "Ensure HTTPS is properly configured before enabling"
+          ],
+          commonIssues: [
+            "Too short max-age values provide minimal protection",
+            "Not including subdomains leaves them vulnerable",
+            "Deploying HSTS without proper HTTPS setup"
+          ]
+        };
+      
+      case 'x-frame-options':
+        return {
+          purpose: "X-Frame-Options prevents your website from being embedded in frames or iframes, protecting against clickjacking attacks where malicious sites trick users into clicking on hidden elements.",
+          howItWorks: "This header tells browsers whether to allow your page to be displayed in frames. 'DENY' blocks all framing, 'SAMEORIGIN' allows framing only by the same origin.",
+          bestPractices: [
+            "Use 'DENY' if your site should never be framed",
+            "Use 'SAMEORIGIN' if you need to frame your own content",
+            "Avoid 'ALLOW-FROM' as it's deprecated and poorly supported",
+            "Consider migrating to CSP's frame-ancestors directive"
+          ],
+          commonIssues: [
+            "Using permissive settings when strict ones would work",
+            "Not testing legitimate embedding use cases",
+            "Mixing X-Frame-Options with CSP frame-ancestors"
+          ]
+        };
+      
+      case 'x-content-type-options':
+        return {
+          purpose: "X-Content-Type-Options prevents MIME-sniffing attacks by stopping browsers from guessing content types different from what the server declares.",
+          howItWorks: "When set to 'nosniff', browsers will strictly follow the Content-Type header and won't try to guess the file type, preventing execution of malicious content disguised as innocent files.",
+          bestPractices: [
+            "Always set to 'nosniff'",
+            "Ensure your server sets correct Content-Type headers",
+            "Test file uploads and downloads work correctly",
+            "Particularly important for user-generated content"
+          ],
+          commonIssues: [
+            "Server not setting proper Content-Type headers",
+            "Forgetting to implement this simple but effective header",
+            "Issues with legacy browsers, though modern support is excellent"
+          ]
+        };
+      
+      case 'referrer-policy':
+        return {
+          purpose: "Referrer Policy controls how much referrer information is shared when users navigate from your site to external sites, protecting user privacy and preventing information leakage.",
+          howItWorks: "This header determines what referrer information (origin, path, query string) is sent in the Referer header when users click links or when resources are requested.",
+          bestPractices: [
+            "Use 'strict-origin-when-cross-origin' for balanced privacy and functionality",
+            "Consider 'strict-origin' for maximum privacy",
+            "Avoid 'no-referrer' unless absolutely necessary",
+            "Test that analytics and affiliate tracking still work"
+          ],
+          commonIssues: [
+            "Using 'unsafe-url' which leaks sensitive URL parameters",
+            "Breaking analytics or affiliate tracking with overly strict policies",
+            "Not considering the impact on third-party integrations"
+          ]
+        };
+      
+      case 'permissions-policy':
+        return {
+          purpose: "Permissions Policy (formerly Feature Policy) controls which browser features and APIs can be used on your website, reducing attack surface and protecting user privacy.",
+          howItWorks: "This header specifies which features like camera, microphone, geolocation, payment APIs, etc., are allowed to be used by your site and any embedded content.",
+          bestPractices: [
+            "Deny unnecessary features like camera and microphone if not needed",
+            "Be restrictive by default, only allow what you actually use",
+            "Consider embedded content and third-party widgets",
+            "Regularly review and update based on new features"
+          ],
+          commonIssues: [
+            "Not restricting unused powerful features",
+            "Breaking embedded content by being too restrictive",
+            "Not updating policies when browser APIs change"
+          ]
+        };
+      
+      case 'x-xss-protection':
+        return {
+          purpose: "X-XSS-Protection is a legacy header that enables built-in XSS filtering in older browsers. Modern browsers have deprecated this in favor of Content Security Policy.",
+          howItWorks: "This header enabled the browser's built-in XSS filter, which attempted to detect and block reflected XSS attacks. However, it had bypass vulnerabilities and is now largely obsolete.",
+          bestPractices: [
+            "Set to '0' (disabled) if you have a strong CSP",
+            "Use '1; mode=block' only if CSP is not available",
+            "Focus on implementing proper CSP instead",
+            "Modern browsers ignore this header"
+          ],
+          commonIssues: [
+            "Relying on this instead of proper CSP",
+            "Not understanding it's largely obsolete",
+            "Potential bypass vulnerabilities in the filter itself"
+          ]
+        };
+      
+      default:
+        return {
+          purpose: "This security header helps protect your website from various attacks.",
+          howItWorks: "Refer to the documentation for specific implementation details.",
+          bestPractices: ["Follow security best practices", "Test thoroughly before deployment"],
+          commonIssues: ["Misconfiguration", "Incomplete implementation"]
+        };
+    }
+  };
+
+  const details = getDetailedExplanation(header.name);
+  
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'secure': return 'text-emerald-700 bg-emerald-50';
+      case 'weak': return 'text-amber-700 bg-amber-50';
+      case 'missing': return 'text-red-700 bg-red-50';
+      default: return 'text-gray-700 bg-gray-50';
+    }
+  };
+
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case 'secure': return 'Properly Configured';
+      case 'weak': return 'Needs Improvement';
+      case 'missing': return 'Not Implemented';
+      default: return 'Unknown';
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
+        {/* Header */}
+        <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 rounded-t-2xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center">
+                <Shield className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">{header.name}</h2>
+                <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(header.status)}`}>
+                  {getStatusText(header.status)}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <XCircle className="w-5 h-5 text-gray-400" />
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="p-6 space-y-6">
+          {/* Current Status */}
+          <div className="bg-gray-50 rounded-xl p-4">
+            <h3 className="font-semibold text-gray-900 mb-2">Current Status</h3>
+            <div className="flex items-center gap-4 mb-3">
+              <span className="text-sm font-medium text-gray-600">Score:</span>
+              <span className="text-lg font-bold text-gray-900">{header.score}/100</span>
+            </div>
+            {header.value ? (
+              <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
+                <code className="text-sm text-emerald-400 font-mono break-all">
+                  {header.value}
+                </code>
+              </div>
+            ) : (
+              <div className="bg-gray-200 rounded-lg p-3 text-center">
+                <span className="text-sm text-gray-600 italic">Header not present</span>
+              </div>
+            )}
+          </div>
+
+          {/* Purpose */}
+          <div>
+            <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+              <Info className="w-4 h-4" />
+              What is this header?
+            </h3>
+            <p className="text-gray-700 leading-relaxed">{details.purpose}</p>
+          </div>
+
+          {/* How it works */}
+          <div>
+            <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+              <Zap className="w-4 h-4" />
+              How it works
+            </h3>
+            <p className="text-gray-700 leading-relaxed">{details.howItWorks}</p>
+          </div>
+
+          {/* Best Practices */}
+          <div>
+            <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 text-emerald-500" />
+              Best Practices
+            </h3>
+            <ul className="space-y-2">
+              {details.bestPractices.map((practice, index) => (
+                <li key={index} className="flex items-start gap-2">
+                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full mt-2 flex-shrink-0"></div>
+                  <span className="text-gray-700 text-sm">{practice}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Common Issues */}
+          <div>
+            <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-500" />
+              Common Issues
+            </h3>
+            <ul className="space-y-2">
+              {details.commonIssues.map((issue, index) => (
+                <li key={index} className="flex items-start gap-2">
+                  <div className="w-1.5 h-1.5 bg-amber-500 rounded-full mt-2 flex-shrink-0"></div>
+                  <span className="text-gray-700 text-sm">{issue}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Current Recommendation */}
+          {header.recommendation && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <h3 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                <ArrowRight className="w-4 h-4" />
+                Recommendation for your site
+              </h3>
+              <p className="text-blue-800 text-sm leading-relaxed">{header.recommendation}</p>
+            </div>
+          )}
+
+          {/* Implementation Guide */}
+          <div className="bg-gray-50 rounded-xl p-4">
+            <h3 className="font-semibold text-gray-900 mb-3">Quick Implementation</h3>
+            <div className="space-y-3 text-sm">
+              <div className="bg-white p-3 rounded-lg border">
+                <div className="font-medium text-gray-700 mb-1">Nginx:</div>
+                <code className="text-xs bg-gray-100 px-2 py-1 rounded">
+                  add_header {header.name} "your-policy-here";
+                </code>
+              </div>
+              <div className="bg-white p-3 rounded-lg border">
+                <div className="font-medium text-gray-700 mb-1">Apache:</div>
+                <code className="text-xs bg-gray-100 px-2 py-1 rounded">
+                  Header always set {header.name} "your-policy-here"
+                </code>
+              </div>
+              <div className="bg-white p-3 rounded-lg border">
+                <div className="font-medium text-gray-700 mb-1">Node.js/Express:</div>
+                <code className="text-xs bg-gray-100 px-2 py-1 rounded">
+                  res.setHeader('{header.name}', 'your-policy-here');
+                </code>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="border-t border-gray-200 px-6 py-4 bg-gray-50 rounded-b-2xl">
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-gray-500">
+              Learn more about security headers at OWASP.org
+            </div>
+            <button
+              onClick={onClose}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Main Component
 export default function SecurityHeadersAnalyzer() {
   const [url, setUrl] = useState('');
@@ -693,6 +1034,8 @@ export default function SecurityHeadersAnalyzer() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [theme, setTheme] = useState(getGradeTheme(50));
+  const [selectedHeader, setSelectedHeader] = useState<SecurityHeader | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
 
   const exampleSites = [
     'github.com',
@@ -733,6 +1076,16 @@ export default function SecurityHeadersAnalyzer() {
     if (e.key === 'Enter') {
       handleAnalyze();
     }
+  };
+
+  const openModal = (header: SecurityHeader) => {
+    setSelectedHeader(header);
+    setModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setSelectedHeader(null);
+    setModalOpen(false);
   };
 
   const criticalIssues = analysisResult?.headers.filter(h => h.severity === 'critical' || (h.status === 'missing' && h.severity === 'high')).length || 0;
@@ -940,7 +1293,7 @@ export default function SecurityHeadersAnalyzer() {
               <div className="mt-8 pt-6 border-t border-gray-200">
                 <div className="flex flex-wrap gap-2">
                   {analysisResult.headers.map((header) => (
-                    <HeaderBadge key={header.name} header={header} />
+                    <HeaderBadge key={header.name} header={header} onClick={() => openModal(header)} />
                   ))}
                 </div>
               </div>
@@ -1115,6 +1468,13 @@ export default function SecurityHeadersAnalyzer() {
             </div>
           </div>
         </footer>
+
+        {/* Header Details Modal */}
+        <SecurityHeaderModal 
+          header={selectedHeader} 
+          isOpen={modalOpen} 
+          onClose={closeModal} 
+        />
       </div>
     </div>
   );
