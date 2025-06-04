@@ -55,9 +55,12 @@ function logRequest(logData) {
   }
 }
 
-// Format log data for Slack with rich formatting
+// Enhanced format log data for Slack with comprehensive information
 function formatSlackMessage(logEntry) {
-  const { level, event, clientIP, country, targetHost, responseStatus, responseTime, error } = logEntry;
+  const { 
+    level, event, clientIP, country, targetHost, responseStatus, responseTime, error,
+    userAgent, referer, headersFound, serverInfo, ipAddress, redirected, finalUrl
+  } = logEntry;
   
   // Choose emoji and color based on log level and event
   let emoji = '📊';
@@ -76,154 +79,330 @@ function formatSlackMessage(logEntry) {
     color = '#3498db'; // Blue
   }
 
+  // Helper functions for better formatting
+  const formatUserAgent = (ua) => {
+    if (!ua || ua === 'unknown') return 'Unknown';
+    // Extract browser info from user agent
+    const browserMatch = ua.match(/(Chrome|Firefox|Safari|Edge)\/[\d.]+/);
+    const osMatch = ua.match(/(Windows|Mac|Linux|Android|iOS)/);
+    const browser = browserMatch ? browserMatch[0] : 'Unknown Browser';
+    const os = osMatch ? osMatch[0] : 'Unknown OS';
+    return `${browser} on ${os}`;
+  };
+
+  const formatReferer = (ref) => {
+    if (!ref || ref === 'direct') return '🔗 Direct access';
+    try {
+      const hostname = new URL(ref).hostname;
+      return `🔗 From: ${hostname}`;
+    } catch {
+      return `🔗 From: ${ref}`;
+    }
+  };
+
+  const getPerformanceEmoji = (time) => {
+    if (time < 1000) return '⚡'; // Fast
+    if (time < 3000) return '🟡'; // Medium  
+    return '🐌'; // Slow
+  };
+
+  const getStatusEmoji = (status) => {
+    if (status >= 200 && status < 300) return '✅';
+    if (status >= 300 && status < 400) return '🔄';
+    if (status >= 400 && status < 500) return '❌';
+    if (status >= 500) return '💥';
+    return '❓';
+  };
+
   // Create different message formats based on event type
   switch (event) {
     case 'analysis_completed':
+      const perfEmoji = getPerformanceEmoji(responseTime);
+      const statusEmoji = getStatusEmoji(responseStatus);
+      
       return {
-        text: `${emoji} Security analysis completed`,
+        text: `${emoji} Security Headers Analysis Complete`,
         attachments: [{
           color: color,
+          title: `📊 Analysis Results for ${targetHost}`,
+          title_link: logEntry.targetUrl,
           fields: [
             {
-              title: "Website Analyzed",
-              value: `\`${targetHost}\``,
+              title: "🎯 Target Website",
+              value: `\`${targetHost}\`${redirected ? ` → \`${new URL(finalUrl).hostname}\`` : ''}`,
               short: true
             },
             {
-              title: "Status",
-              value: responseStatus || 'Unknown',
+              title: `${statusEmoji} HTTP Status`,
+              value: `${responseStatus} ${responseStatus === 200 ? '(OK)' : responseStatus >= 400 ? '(Error)' : '(Redirect)'}`,
               short: true
             },
             {
-              title: "Response Time",
-              value: `${responseTime}ms`,
+              title: `${perfEmoji} Performance`,
+              value: `${responseTime}ms ${responseTime < 1000 ? '(Fast)' : responseTime < 3000 ? '(Good)' : '(Slow)'}`,
               short: true
             },
             {
-              title: "Client Info",
-              value: `${clientIP} (${country})`,
+              title: "🛡️ Security Headers",
+              value: `${headersFound || 0} headers found`,
               short: true
+            },
+            {
+              title: "🌍 Client Location",
+              value: `${clientIP} ${country ? `🏳️ ${country}` : ''}`,
+              short: true
+            },
+            {
+              title: "🖥️ Client Browser",
+              value: formatUserAgent(userAgent),
+              short: true
+            },
+            {
+              title: "🔗 Traffic Source",
+              value: formatReferer(referer),
+              short: false
+            },
+            {
+              title: "🖧 Server Details",
+              value: `${serverInfo || 'Unknown'} ${ipAddress ? `(${ipAddress})` : ''}`,
+              short: false
             }
           ],
-          footer: "Security Headers Analyzer",
+          footer: "🔒 Security Headers Analyzer | MAKR",
+          footer_icon: "https://emojipedia-us.s3.dualstack.us-west-1.amazonaws.com/thumbs/240/apple/285/shield_1f6e1.png",
           ts: Math.floor(Date.now() / 1000)
         }]
       };
 
     case 'analysis_failed':
       return {
-        text: `${emoji} Analysis failed`,
+        text: `${emoji} Security Analysis Failed`,
         attachments: [{
           color: color,
+          title: `❌ Failed to analyze ${logEntry.targetUrl}`,
           fields: [
             {
-              title: "Target URL",
+              title: "🎯 Target URL",
               value: `\`${logEntry.targetUrl}\``,
               short: false
             },
             {
-              title: "Error",
-              value: error || 'Unknown error',
+              title: "💥 Error Details",
+              value: `\`${error || 'Unknown error'}\``,
               short: false
             },
             {
-              title: "Client",
-              value: `${clientIP} (${country})`,
+              title: "📂 Error Category",
+              value: `${logEntry.category || 'unknown'}`.toUpperCase(),
               short: true
             },
             {
-              title: "Category",
-              value: logEntry.category || 'unknown',
+              title: "⏱️ Failed After",
+              value: `${logEntry.processingTime}ms`,
               short: true
+            },
+            {
+              title: "🌍 Client Info",
+              value: `${clientIP} ${country ? `🏳️ ${country}` : ''}`,
+              short: true
+            },
+            {
+              title: "🖥️ Client Browser",
+              value: formatUserAgent(userAgent),
+              short: true
+            },
+            {
+              title: "🔗 Traffic Source",
+              value: formatReferer(referer),
+              short: false
+            },
+            {
+              title: "🔧 Troubleshooting",
+              value: logEntry.category === 'blocked-url' ? 
+                'URL blocked for security (private/internal address)' :
+                logEntry.category === 'timeout' ?
+                'Website took too long to respond' :
+                logEntry.category === 'dns' ?
+                'Domain not found or DNS issues' :
+                'Check if website is accessible',
+              short: false
             }
           ],
-          footer: "Security Headers Analyzer",
+          footer: "🔒 Security Headers Analyzer | MAKR",
+          footer_icon: "https://emojipedia-us.s3.dualstack.us-west-1.amazonaws.com/thumbs/240/apple/285/cross-mark_274c.png",
           ts: Math.floor(Date.now() / 1000)
         }]
       };
 
     case 'rate_limit_exceeded':
       return {
-        text: `${emoji} Rate limit exceeded`,
+        text: `${emoji} Rate Limit Exceeded - Potential Abuse`,
         attachments: [{
           color: color,
+          title: "🚦 Rate Limiting Activated",
           fields: [
             {
-              title: "Client IP",
-              value: clientIP,
+              title: "🌍 Client IP",
+              value: `${clientIP} ${country ? `🏳️ ${country}` : ''}`,
               short: true
             },
             {
-              title: "Country",
-              value: country || 'Unknown',
+              title: "📊 Request Count",
+              value: `${logEntry.requestCount || 'Unknown'}/30 per minute`,
               short: true
             },
             {
-              title: "Request Count",
-              value: logEntry.requestCount?.toString() || 'Unknown',
-              short: true
+              title: "🖥️ User Agent",
+              value: formatUserAgent(userAgent),
+              short: false
+            },
+            {
+              title: "🔗 Traffic Source",
+              value: formatReferer(referer),
+              short: false
+            },
+            {
+              title: "⚠️ Action Required",
+              value: "Monitor for potential abuse or bot activity",
+              short: false
             }
           ],
-          footer: "Security Headers Analyzer",
+          footer: "🔒 Security Headers Analyzer | MAKR",
+          footer_icon: "https://emojipedia-us.s3.dualstack.us-west-1.amazonaws.com/thumbs/240/apple/285/warning_26a0.png",
           ts: Math.floor(Date.now() / 1000)
         }]
       };
 
     case 'suspicious_port':
       return {
-        text: `${emoji} Suspicious port detected`,
+        text: `${emoji} Suspicious Port Scan Detected`,
         attachments: [{
           color: '#ff9900',
+          title: "🔍 Potential Port Scanning Activity",
           fields: [
             {
-              title: "Hostname",
-              value: logEntry.hostname,
+              title: "🎯 Target Hostname",
+              value: `\`${logEntry.hostname}\``,
               short: true
             },
             {
-              title: "Port",
-              value: logEntry.port,
+              title: "🔌 Suspicious Port",
+              value: `\`${logEntry.port}\` (Non-standard)`,
               short: true
             },
             {
-              title: "Full URL",
+              title: "🌐 Full URL",
               value: `\`${logEntry.url}\``,
               short: false
             },
             {
-              title: "Client",
-              value: `${clientIP} (${country})`,
+              title: "🌍 Client Info",
+              value: `${clientIP} ${country ? `🏳️ ${country}` : ''}`,
+              short: true
+            },
+            {
+              title: "🖥️ User Agent",
+              value: formatUserAgent(userAgent),
+              short: true
+            },
+            {
+              title: "⚠️ Security Note",
+              value: "Non-standard ports may indicate scanning or reconnaissance activity",
+              short: false
+            }
+          ],
+          footer: "🔒 Security Headers Analyzer | MAKR",
+          footer_icon: "https://emojipedia-us.s3.dualstack.us-west-1.amazonaws.com/thumbs/240/apple/285/magnifying-glass-tilted-left_1f50d.png",
+          ts: Math.floor(Date.now() / 1000)
+        }]
+      };
+
+    case 'analysis_started':
+      return {
+        text: `${emoji} Starting Security Analysis`,
+        attachments: [{
+          color: color,
+          title: `🔍 Analyzing ${targetHost}`,
+          fields: [
+            {
+              title: "🎯 Target",
+              value: `\`${logEntry.targetUrl}\``,
+              short: false
+            },
+            {
+              title: "🌍 Client",
+              value: `${clientIP} ${country ? `🏳️ ${country}` : ''}`,
+              short: true
+            },
+            {
+              title: "🖥️ Browser",
+              value: formatUserAgent(userAgent),
               short: true
             }
           ],
-          footer: "Security Headers Analyzer",
+          footer: "🔒 Security Headers Analyzer | MAKR",
           ts: Math.floor(Date.now() / 1000)
         }]
       };
 
     default:
-      // Generic message format for other events
+      // Enhanced generic message format
+      const relevantFields = Object.entries(logEntry)
+        .filter(([key, value]) => 
+          !['timestamp', 'level', 'event', 'userAgent'].includes(key) && 
+          value !== undefined && 
+          value !== 'unknown' &&
+          value !== ''
+        )
+        .slice(0, 8);
+
       return {
-        text: `${emoji} ${event.replace(/_/g, ' ')}`,
+        text: `${emoji} ${event.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}`,
         attachments: [{
           color: color,
-          fields: Object.entries(logEntry)
-            .filter(([key, value]) => 
-              !['timestamp', 'level', 'event'].includes(key) && 
-              value !== undefined && 
-              value !== 'unknown'
-            )
-            .slice(0, 6) // Limit to 6 fields to avoid clutter
-            .map(([key, value]) => ({
-              title: key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+          title: `📊 Event: ${event}`,
+          fields: [
+            {
+              title: "🌍 Client Info",
+              value: `${clientIP} ${country ? `🏳️ ${country}` : ''}`,
+              short: true
+            },
+            {
+              title: "🖥️ Browser",
+              value: formatUserAgent(userAgent),
+              short: true
+            },
+            ...relevantFields.map(([key, value]) => ({
+              title: `${getFieldEmoji(key)} ${key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}`,
               value: typeof value === 'string' ? value : JSON.stringify(value),
               short: true
-            })),
-          footer: "Security Headers Analyzer",
+            }))
+          ],
+          footer: "🔒 Security Headers Analyzer | MAKR",
           ts: Math.floor(Date.now() / 1000)
         }]
       };
   }
+}
+
+// Helper function to get appropriate emoji for field names
+function getFieldEmoji(fieldName) {
+  const emojiMap = {
+    'target_url': '🎯',
+    'target_host': '🌐',
+    'response_status': '📊',
+    'response_time': '⏱️',
+    'headers_found': '🛡️',
+    'server_info': '🖧',
+    'ip_address': '🌐',
+    'error': '💥',
+    'category': '📂',
+    'referer': '🔗',
+    'user_agent': '🖥️',
+    'country': '🏳️',
+    'processing_time': '⏱️'
+  };
+  return emojiMap[fieldName] || '📋';
 }
 
 // Enhanced rate limiting with better cleanup
