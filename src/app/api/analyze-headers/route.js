@@ -30,7 +30,7 @@ const BROWSER_CONFIGS = [
   }
 ];
 
-// Comprehensive logging function
+// Comprehensive logging function with Slack formatting
 function logRequest(logData) {
   const timestamp = new Date().toISOString();
   const logEntry = {
@@ -42,15 +42,187 @@ function logRequest(logData) {
   // Console log for Vercel logs (viewable in Vercel dashboard)
   console.log(`[${logEntry.level}] ${timestamp} - ${JSON.stringify(logEntry)}`);
   
-  // Optional: Send to external logging service
-  console.log(`🔗 Logging to external service: ${process.env.WEBHOOK_LOGGING_URL || 'not configured'}`);
-  if (process.env.WEBHOOK_LOGGING_URL) {
+  // Send formatted message to Slack
+  if (process.env.SLACK_WEBHOOK_URL) {
+    const slackMessage = formatSlackMessage(logEntry);
+    
     // Fire and forget webhook (don't await to avoid slowing down response)
-    fetch(process.env.WEBHOOK_LOGGING_URL, {
+    fetch(process.env.SLACK_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(logEntry)
-    }).catch(err => console.error('Webhook logging failed:', err));
+      body: JSON.stringify(slackMessage)
+    }).catch(err => console.error('Slack webhook failed:', err));
+  }
+}
+
+// Format log data for Slack with rich formatting
+function formatSlackMessage(logEntry) {
+  const { level, event, clientIP, country, targetHost, responseStatus, responseTime, error } = logEntry;
+  
+  // Choose emoji and color based on log level and event
+  let emoji = '📊';
+  let color = '#36a64f'; // Green
+  
+  if (level === 'ERROR') {
+    emoji = '🚨';
+    color = '#ff0000'; // Red
+  } else if (level === 'WARN') {
+    emoji = '⚠️';
+    color = '#ff9900'; // Orange
+  } else if (event === 'analysis_completed') {
+    emoji = '✅';
+  } else if (event === 'analysis_started') {
+    emoji = '🔍';
+    color = '#3498db'; // Blue
+  }
+
+  // Create different message formats based on event type
+  switch (event) {
+    case 'analysis_completed':
+      return {
+        text: `${emoji} Security analysis completed`,
+        attachments: [{
+          color: color,
+          fields: [
+            {
+              title: "Website Analyzed",
+              value: `\`${targetHost}\``,
+              short: true
+            },
+            {
+              title: "Status",
+              value: responseStatus || 'Unknown',
+              short: true
+            },
+            {
+              title: "Response Time",
+              value: `${responseTime}ms`,
+              short: true
+            },
+            {
+              title: "Client Info",
+              value: `${clientIP} (${country})`,
+              short: true
+            }
+          ],
+          footer: "Security Headers Analyzer",
+          ts: Math.floor(Date.now() / 1000)
+        }]
+      };
+
+    case 'analysis_failed':
+      return {
+        text: `${emoji} Analysis failed`,
+        attachments: [{
+          color: color,
+          fields: [
+            {
+              title: "Target URL",
+              value: `\`${logEntry.targetUrl}\``,
+              short: false
+            },
+            {
+              title: "Error",
+              value: error || 'Unknown error',
+              short: false
+            },
+            {
+              title: "Client",
+              value: `${clientIP} (${country})`,
+              short: true
+            },
+            {
+              title: "Category",
+              value: logEntry.category || 'unknown',
+              short: true
+            }
+          ],
+          footer: "Security Headers Analyzer",
+          ts: Math.floor(Date.now() / 1000)
+        }]
+      };
+
+    case 'rate_limit_exceeded':
+      return {
+        text: `${emoji} Rate limit exceeded`,
+        attachments: [{
+          color: color,
+          fields: [
+            {
+              title: "Client IP",
+              value: clientIP,
+              short: true
+            },
+            {
+              title: "Country",
+              value: country || 'Unknown',
+              short: true
+            },
+            {
+              title: "Request Count",
+              value: logEntry.requestCount?.toString() || 'Unknown',
+              short: true
+            }
+          ],
+          footer: "Security Headers Analyzer",
+          ts: Math.floor(Date.now() / 1000)
+        }]
+      };
+
+    case 'suspicious_port':
+      return {
+        text: `${emoji} Suspicious port detected`,
+        attachments: [{
+          color: '#ff9900',
+          fields: [
+            {
+              title: "Hostname",
+              value: logEntry.hostname,
+              short: true
+            },
+            {
+              title: "Port",
+              value: logEntry.port,
+              short: true
+            },
+            {
+              title: "Full URL",
+              value: `\`${logEntry.url}\``,
+              short: false
+            },
+            {
+              title: "Client",
+              value: `${clientIP} (${country})`,
+              short: true
+            }
+          ],
+          footer: "Security Headers Analyzer",
+          ts: Math.floor(Date.now() / 1000)
+        }]
+      };
+
+    default:
+      // Generic message format for other events
+      return {
+        text: `${emoji} ${event.replace(/_/g, ' ')}`,
+        attachments: [{
+          color: color,
+          fields: Object.entries(logEntry)
+            .filter(([key, value]) => 
+              !['timestamp', 'level', 'event'].includes(key) && 
+              value !== undefined && 
+              value !== 'unknown'
+            )
+            .slice(0, 6) // Limit to 6 fields to avoid clutter
+            .map(([key, value]) => ({
+              title: key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+              value: typeof value === 'string' ? value : JSON.stringify(value),
+              short: true
+            })),
+          footer: "Security Headers Analyzer",
+          ts: Math.floor(Date.now() / 1000)
+        }]
+      };
   }
 }
 
