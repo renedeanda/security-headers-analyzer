@@ -112,8 +112,16 @@ export default function SecurityHeadersAnalyzer() {
         {/* Footer */}
         <footer className="mt-16 pt-8 border-t border-gray-200/50 dark:border-gray-700/50 text-center">
           <div className="text-sm text-gray-600 dark:text-gray-400">
-            <p className="mb-2">Built by MAKR • Protecting websites with security best practices</p>
-            <div className="flex justify-center gap-6">
+            <a
+              href="https://renedeanda.com"
+              className="inline-block mb-3 text-base font-medium text-gray-800 dark:text-gray-200 hover:text-purple-500 dark:hover:text-purple-400 transition-colors"
+              target="_blank"
+              rel="noopener"
+            >
+              Made with 💜 by René DeAnda
+            </a>
+            <p className="mb-4 text-xs">Protecting websites with security best practices</p>
+            <div className="flex justify-center gap-6 text-xs">
               <a href="https://owasp.org" className="hover:text-gray-800 dark:hover:text-gray-200 transition-colors">OWASP</a>
               <a href="https://mozilla.org/security" className="hover:text-gray-800 dark:hover:text-gray-200 transition-colors">Mozilla Security</a>
               <a href="https://web.dev/secure" className="hover:text-gray-800 dark:hover:text-gray-200 transition-colors">Web.dev Security</a>

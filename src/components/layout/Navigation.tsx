@@ -26,7 +26,16 @@ export const Navigation: React.FC<NavigationProps> = ({
             </div>
             <div>
               <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Security Headers</h1>
-              <p className="text-sm text-gray-600 dark:text-gray-400">by MAKR</p>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                by <a
+                  href="https://makr.io"
+                  className="hover:text-purple-500 dark:hover:text-purple-400 transition-colors"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  MAKR
+                </a>
+              </p>
             </div>
           </div>
 
