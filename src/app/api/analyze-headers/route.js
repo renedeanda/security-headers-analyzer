@@ -38,14 +38,14 @@ function logRequest(logData) {
     level: logData.level || 'INFO',
     ...logData
   };
-  
+
   // Console log for Vercel logs (viewable in Vercel dashboard)
   console.log(`[${logEntry.level}] ${timestamp} - ${JSON.stringify(logEntry)}`);
-  
+
   // Send formatted message to Slack
   if (process.env.SLACK_WEBHOOK_URL) {
     const slackMessage = formatSlackMessage(logEntry);
-    
+
     // Fire and forget webhook (don't await to avoid slowing down response)
     fetch(process.env.SLACK_WEBHOOK_URL, {
       method: 'POST',
@@ -57,15 +57,15 @@ function logRequest(logData) {
 
 // Enhanced format log data for Slack with comprehensive information
 function formatSlackMessage(logEntry) {
-  const { 
+  const {
     level, event, clientIP, country, targetHost, responseStatus, responseTime, error,
     userAgent, referer, headersFound, serverInfo, ipAddress, redirected, finalUrl
   } = logEntry;
-  
+
   // Choose emoji and color based on log level and event
   let emoji = '📊';
   let color = '#36a64f'; // Green
-  
+
   if (level === 'ERROR') {
     emoji = '🚨';
     color = '#ff0000'; // Red
@@ -119,7 +119,7 @@ function formatSlackMessage(logEntry) {
     case 'analysis_completed':
       const perfEmoji = getPerformanceEmoji(responseTime);
       const statusEmoji = getStatusEmoji(responseStatus);
-      
+
       return {
         text: `${emoji} Security Headers Analysis Complete`,
         attachments: [{
@@ -218,13 +218,13 @@ function formatSlackMessage(logEntry) {
             },
             {
               title: "🔧 Troubleshooting",
-              value: logEntry.category === 'blocked-url' ? 
+              value: logEntry.category === 'blocked-url' ?
                 'URL blocked for security (private/internal address)' :
                 logEntry.category === 'timeout' ?
-                'Website took too long to respond' :
-                logEntry.category === 'dns' ?
-                'Domain not found or DNS issues' :
-                'Check if website is accessible',
+                  'Website took too long to respond' :
+                  logEntry.category === 'dns' ?
+                    'Domain not found or DNS issues' :
+                    'Check if website is accessible',
               short: false
             }
           ],
@@ -348,9 +348,9 @@ function formatSlackMessage(logEntry) {
     default:
       // Enhanced generic message format
       const relevantFields = Object.entries(logEntry)
-        .filter(([key, value]) => 
-          !['timestamp', 'level', 'event', 'userAgent'].includes(key) && 
-          value !== undefined && 
+        .filter(([key, value]) =>
+          !['timestamp', 'level', 'event', 'userAgent'].includes(key) &&
+          value !== undefined &&
           value !== 'unknown' &&
           value !== ''
         )
@@ -405,30 +405,43 @@ function getFieldEmoji(fieldName) {
   return emojiMap[fieldName] || '📋';
 }
 
-// Enhanced rate limiting with better cleanup
+// SAFE RATE LIMITING (replace your checkRateLimit function)
 function checkRateLimit(clientIP, userAgent) {
+  // 1. SANITIZE INPUTS
+  const safeIP = (clientIP || '').replace(/[^\w.:-]/g, '').substring(0, 45);
+  const safeUA = (userAgent || '').substring(0, 500); // Limit length
+
+  if (!safeIP) {
+    throw new Error('Invalid client IP');
+  }
+
   const now = Date.now();
-  const minuteKey = `${clientIP}:${Math.floor(now / 60000)}`;
-  
-  // Periodic cleanup (every ~100 requests)
+  const minuteKey = `${safeIP}:${Math.floor(now / 60000)}`;
+
+  // 2. PERIODIC CLEANUP (prevent memory leaks)
   if (Math.random() < 0.01) {
     const cutoff = now - 300000; // 5 minutes ago
+    let cleanupCount = 0;
     for (const [key, data] of rateLimitStore.entries()) {
       if (data.timestamp < cutoff) {
         rateLimitStore.delete(key);
+        cleanupCount++;
       }
+      // Prevent cleanup from taking too long
+      if (cleanupCount > 1000) break;
     }
   }
 
   const limitData = rateLimitStore.get(minuteKey) || { count: 0, timestamp: now };
-  
-  // More lenient rate limiting: 30 requests per minute
+
+  // 3. RATE LIMIT CHECK
   if (limitData.count >= 30) {
+    // Log with safe data
     logRequest({
       level: 'WARN',
       event: 'rate_limit_exceeded',
-      clientIP,
-      userAgent,
+      clientIP: safeIP,
+      userAgent: safeUA.substring(0, 100), // Truncate for logging
       requestCount: limitData.count
     });
     throw new Error('Rate limit exceeded. Please wait a minute before trying again.');
@@ -444,98 +457,142 @@ function getRandomBrowserConfig() {
 
 // Add random delay to avoid being flagged as bot
 function randomDelay(min = 100, max = 500) {
-  return new Promise(resolve => 
+  return new Promise(resolve =>
     setTimeout(resolve, Math.floor(Math.random() * (max - min + 1)) + min)
   );
 }
 
-// Enhanced but less restrictive URL validation
+// SAFE REPLACEMENT for your validateAndNormalizeURL function
 function validateAndNormalizeURL(url) {
+  // 1. STRICT LENGTH LIMITS (prevent memory attacks)
+  if (!url || typeof url !== 'string' || url.length > 2048) {
+    throw new Error('Invalid URL: too long or invalid type');
+  }
+
+  // 2. SANITIZE INPUT (remove control characters)
+  const cleanUrl = url.replace(/[\x00-\x1f\x7f-\x9f]/g, '').trim();
+  if (cleanUrl !== url.trim()) {
+    throw new Error('Invalid URL: contains control characters');
+  }
+
+  let urlToCheck = cleanUrl;
+
+  // 3. ADD PROTOCOL SAFELY
+  if (!urlToCheck.startsWith('http://') && !urlToCheck.startsWith('https://')) {
+    urlToCheck = `https://${urlToCheck}`;
+  }
+
   let targetUrl;
   try {
-    // Handle different URL formats
-    let urlToCheck = url.trim();
-    
-    // Add protocol if missing
-    if (!urlToCheck.startsWith('http://') && !urlToCheck.startsWith('https://')) {
-      urlToCheck = `https://${urlToCheck}`;
-    }
-    
     targetUrl = new URL(urlToCheck);
-    
-    if (!['http:', 'https:'].includes(targetUrl.protocol)) {
-      throw new Error('Only HTTP and HTTPS protocols are supported');
-    }
-
-    // Enhanced private network detection with more patterns
-    const hostname = targetUrl.hostname.toLowerCase();
-    const privatePatterns = [
-      // IPv4 private ranges
-      /^127\./, /^10\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[01])\./,
-      /^169\.254\./, /^0\.0\.0\.0$/, /^255\.255\.255\.255$/,
-      // IPv6 patterns
-      /^::1$/, /^::ffff:127\./, /^fc00:/, /^fd00:/, /^fe80:/,
-      // Additional localhost variants
-      /^localhost$/i, /^.*\.local$/i, /^.*\.localhost$/i,
-      // Cloud metadata endpoints (AWS, GCP, Azure)
-      /^169\.254\.169\.254$/, /^metadata\.google\.internal$/i,
-      /^169\.254\.169\.254$/, /^100\.100\.100\.200$/
-    ];
-    
-    const blockedHosts = [
-      'localhost', 'local', '0.0.0.0', '127.0.0.1', 'broadcasthost',
-      'ip6-localhost', 'ip6-loopback', 'metadata.google.internal',
-      'instance-data', 'metadata'
-    ];
-    
-    if (blockedHosts.includes(hostname) || privatePatterns.some(pattern => pattern.test(hostname))) {
-      throw new Error('Cannot analyze private, local, or internal addresses');
-    }
-
-    // Basic hostname validation (less restrictive)
-    if (hostname.includes('..') || hostname.length < 3) {
-      throw new Error('Invalid hostname format');
-    }
-
-    // Check for suspicious ports
-    const port = targetUrl.port;
-    if (port && !['80', '443', '8080', '8443'].includes(port)) {
-      logRequest({
-        level: 'WARN',
-        event: 'suspicious_port',
-        hostname,
-        port,
-        url: targetUrl.toString()
-      });
-    }
-
-    return targetUrl;
-
   } catch (error) {
-    throw new Error(error.message.includes('Cannot analyze') ? error.message : 'Invalid URL format');
+    throw new Error('Invalid URL format');
   }
+
+  // 4. PROTOCOL VALIDATION
+  if (!['http:', 'https:'].includes(targetUrl.protocol)) {
+    throw new Error('Only HTTP and HTTPS protocols are supported');
+  }
+
+  // 5. SAFE HOSTNAME VALIDATION (no dangerous regex)
+  const hostname = targetUrl.hostname.toLowerCase();
+
+  // Length check
+  if (hostname.length > 253) {
+    throw new Error('Hostname too long');
+  }
+
+  // Character validation (simple, safe regex)
+  if (!/^[a-z0-9.-]+$/.test(hostname)) {
+    throw new Error('Invalid hostname characters');
+  }
+
+  // 6. BLOCKED HOSTS (exact string matching - fastest & safest)
+  const blockedHosts = [
+    'localhost', 'local', '0.0.0.0', '127.0.0.1', 'broadcasthost',
+    'ip6-localhost', 'ip6-loopback', 'metadata.google.internal',
+    'instance-data', 'metadata', 'metadata.goog'
+  ];
+
+  if (blockedHosts.includes(hostname)) {
+    throw new Error('Cannot analyze private, local, or internal addresses');
+  }
+
+  // 7. SUFFIX CHECKS (safer than regex)
+  const blockedSuffixes = ['.local', '.localhost', '.internal', '.test'];
+  if (blockedSuffixes.some(suffix => hostname.endsWith(suffix))) {
+    throw new Error('Cannot analyze private, local, or internal addresses');
+  }
+
+  // 8. IP RANGE CHECKS (safer than complex regex)
+  if (hostname.startsWith('127.') ||
+    hostname.startsWith('10.') ||
+    hostname.startsWith('192.168.') ||
+    hostname.startsWith('169.254.') ||
+    hostname === '::1' ||
+    hostname.startsWith('fc00:') ||
+    hostname.startsWith('fd00:') ||
+    hostname.startsWith('fe80:')) {
+    throw new Error('Cannot analyze private, local, or internal addresses');
+  }
+
+  // 9. 172.16-31.x.x RANGE CHECK (safe parsing)
+  if (hostname.startsWith('172.')) {
+    const parts = hostname.split('.');
+    if (parts.length >= 2) {
+      const secondOctet = parseInt(parts[1], 10);
+      if (!isNaN(secondOctet) && secondOctet >= 16 && secondOctet <= 31) {
+        throw new Error('Cannot analyze private, local, or internal addresses');
+      }
+    }
+  }
+
+  // 10. CLOUD METADATA CHECKS
+  const cloudMetadata = [
+    '169.254.169.254',  // AWS/Azure metadata
+    '100.100.100.200',  // Alibaba Cloud
+    'metadata.google.internal'
+  ];
+
+  if (cloudMetadata.includes(hostname)) {
+    throw new Error('Cannot analyze cloud metadata endpoints');
+  }
+
+  // 11. ADDITIONAL SAFETY CHECKS
+  if (hostname.includes('..') || hostname.includes('%')) {
+    throw new Error('Invalid hostname format');
+  }
+
+  // 12. PORT VALIDATION (log suspicious ports)
+  const port = targetUrl.port;
+  if (port && !['80', '443', '8080', '8443'].includes(port)) {
+    console.warn(`Suspicious port detected: ${hostname}:${port}`);
+    // Don't throw - just log for monitoring
+  }
+
+  return targetUrl;
 }
 
 export async function GET(request) {
   const startTime = Date.now();
-  
+
   // Extract client information for logging
   const headersList = headers();
-  const clientIP = headersList.get('x-forwarded-for')?.split(',')[0]?.trim() || 
-                   headersList.get('x-real-ip') || 
-                   headersList.get('cf-connecting-ip') || // Cloudflare
-                   'unknown';
+  const clientIP = headersList.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    headersList.get('x-real-ip') ||
+    headersList.get('cf-connecting-ip') || // Cloudflare
+    'unknown';
   const userAgent = headersList.get('user-agent') || 'unknown';
   const referer = headersList.get('referer') || 'direct';
   const country = headersList.get('cf-ipcountry') || 'unknown'; // Cloudflare country header
-  
+
   try {
     // Rate limiting
     checkRateLimit(clientIP, userAgent);
 
     const { searchParams } = new URL(request.url);
     const url = searchParams.get('url');
-    
+
     if (!url) {
       logRequest({
         level: 'WARN',
@@ -569,10 +626,10 @@ export async function GET(request) {
     await randomDelay(200, 800);
 
     console.log(`🔍 Analyzing: ${targetUrl.toString()} from ${clientIP} (${country})`);
-    
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 20000); // Reduced to 20 seconds
-    
+
     let response;
     let lastError;
     const browserConfig = getRandomBrowserConfig();
@@ -588,12 +645,12 @@ export async function GET(request) {
     for (const { method, followRedirects } of methods) {
       try {
         console.log(`🚀 Trying ${method} request ${followRedirects ? 'with' : 'without'} redirects...`);
-        
+
         // Build realistic headers
         const headers = {
           'User-Agent': browserConfig.userAgent,
-          'Accept': method === 'HEAD' 
-            ? '*/*' 
+          'Accept': method === 'HEAD'
+            ? '*/*'
             : 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
           'Accept-Language': browserConfig.acceptLanguage,
           'Accept-Encoding': browserConfig.acceptEncoding,
@@ -658,7 +715,7 @@ export async function GET(request) {
     response.headers.forEach((value, key) => {
       const lowerKey = key.toLowerCase();
       if (rawHeaders[lowerKey]) {
-        rawHeaders[lowerKey] = Array.isArray(rawHeaders[lowerKey]) 
+        rawHeaders[lowerKey] = Array.isArray(rawHeaders[lowerKey])
           ? [...rawHeaders[lowerKey], value]
           : [rawHeaders[lowerKey], value];
       } else {
@@ -731,7 +788,7 @@ export async function GET(request) {
 
   } catch (error) {
     const processingTime = Date.now() - startTime;
-    
+
     // Enhanced error categorization
     let errorMessage = error.message;
     let statusCode = 500;
@@ -791,7 +848,7 @@ export async function GET(request) {
     console.error(`❌ Analysis failed after ${processingTime}ms:`, error.message);
 
     return NextResponse.json(
-      { 
+      {
         success: false,
         error: errorMessage,
         category,

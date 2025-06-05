@@ -6,26 +6,45 @@
   html {
     font-family: Inter, system-ui, sans-serif;
   }
+  
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+  }
+  
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+  }
 }
 
 @layer components {
   .security-badge-secure {
-    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800;
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+    @apply bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400;
   }
   
   .security-badge-weak {
-    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800;
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+    @apply bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400;
   }
   
   .security-badge-missing {
-    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800;
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+    @apply bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400;
+  }
+  
+  .theme-transition {
+    @apply transition-colors duration-300 ease-in-out;
   }
 }
 
 input {
-  @apply border border-gray-300 rounded-md p-2;
+  @apply border border-gray-300 dark:border-gray-600 rounded-md p-2;
+  @apply bg-white dark:bg-dark-surface text-gray-900 dark:text-dark-text-primary;
 }
 
 .card {
-  @apply bg-white shadow-md rounded-lg p-4;
+  @apply bg-white dark:bg-dark-card shadow-md rounded-lg p-4;
+  @apply border border-gray-200 dark:border-dark-border;
 }
