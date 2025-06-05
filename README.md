@@ -1,86 +1,131 @@
-# Header Hero 🛡️
+# Security Headers Analyzer 🛡️
 
-Header Hero is a web-based tool designed to help developers quickly understand and analyze HTTP security headers for any website. Built with Next.js 15, TypeScript, and Tailwind CSS.
+[![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=next.js)](https://nextjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)](https://www.typescriptlang.org/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-3-38B2AC?logo=tailwind-css)](https://tailwindcss.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen?logo=vercel)](https://security.makr.io)
 
-## Features
+A modern, free web tool to analyze and grade your website's HTTP security headers. Get instant security assessments with actionable recommendations to protect against XSS, clickjacking, and other web vulnerabilities.
 
-✅ **Comprehensive Analysis**: Analyzes 8 key security headers including:
-  - `Content-Security-Policy` & `Content-Security-Policy-Report-Only`
-  - `Strict-Transport-Security`
-  - `X-Frame-Options`
-  - `X-Content-Type-Options`
-  - `Referrer-Policy`
-  - `Permissions-Policy`
-  - `X-XSS-Protection`
+## 🚀 Live Demo
 
-✅ **Smart Scoring System**: 
-  - Weighted scoring based on header importance
-  - Contextual analysis (e.g., X-XSS-Protection considers CSP presence)
-  - Handles CSP-Report-Only headers appropriately
-  - Partial credit for HTTPS sites without HSTS
+**Try it now**: [security.makr.io](https://security.makr.io)
 
-✅ **Security Scoring**: Each header is evaluated as:
-  - 🟢 Secure
-  - 🟡 Weak
-  - 🔴 Missing
+Test with popular sites like GitHub, Google, Stripe, or enter your own domain for instant analysis!
 
-✅ **Educational**: Clear explanations and actionable recommendations for each header
+## ✨ Features
 
-✅ **Modern UI**: Responsive design with visual score indicators and example sites
+### 🔍 **Comprehensive Security Analysis**
+Analyzes **8 critical security headers** with intelligent scoring:
 
-## Recent Improvements (v1.1)
+| Header | Weight | Purpose |
+|--------|--------|---------|
+| `Content-Security-Policy` | 30pts | Prevents XSS and code injection attacks |
+| `Strict-Transport-Security` | 15pts | Enforces HTTPS connections |
+| `X-Frame-Options` | 10pts | Protects against clickjacking |
+| `X-Content-Type-Options` | 10pts | Prevents MIME-type sniffing |
+| `Referrer-Policy` | 10pts | Controls referrer information leakage |
+| `Permissions-Policy` | 10pts | Manages browser feature permissions |
+| `X-XSS-Protection` | 10pts | Legacy XSS protection (context-aware) |
+| `CSP-Report-Only` | 5pts | Monitors policy violations |
 
-### Enhanced Scoring Logic
-- **CSP-Report-Only Support**: Properly handles and scores Content-Security-Policy-Report-Only headers (60% of enforcing policy score)
-- **Contextual X-XSS-Protection**: Smart scoring that gives high marks when XSS protection is disabled but CSP is present
-- **Weighted Scoring**: Realistic scoring system that prioritizes critical headers (CSP: 30pts, HSTS: 15pts, etc.)
-- **HTTPS Awareness**: Partial credit (60%) for sites using HTTPS even without explicit HSTS header
+### 🎯 **Smart Scoring System**
+- **Grade-based evaluation** (A+ to F) with visual indicators
+- **Contextual analysis** (e.g., X-XSS-Protection scored intelligently when CSP is present)
+- **Weighted scoring** prioritizing critical headers
+- **HTTPS awareness** with partial credit for secure connections
+- **CSP-Report-Only support** for gradual policy deployment
 
-### Technical Improvements
-- 10-second timeout for header fetching
-- Enhanced CSP analysis with penalties for unsafe-inline/unsafe-eval
-- Better error handling and user feedback
-- Added Mozilla.org as example test site
+### 📊 **Visual Grade System**
+- 🟢 **A/B Grades**: Excellent/Good security posture
+- 🟡 **C/D Grades**: Fair/Poor security with improvement needed
+- 🔴 **F Grade**: Critical security issues requiring immediate attention
 
-## Getting Started
+### 🎓 **Educational Resources**
+- **Clear explanations** for each security header
+- **Actionable recommendations** with implementation examples
+- **OWASP compliance** guidance
+- **Best practices** for modern web security
+
+### 🎨 **Modern User Experience**
+- **Responsive design** optimized for all devices
+- **Dark/Light theme** with smooth transitions
+- **Real-time analysis** with progress indicators
+- **Example sites** for quick testing (GitHub, Stripe, OpenAI, etc.)
+
+## 🛠️ Tech Stack
+
+- **Framework**: Next.js 15 with App Router
+- **Language**: TypeScript for type safety
+- **Styling**: Tailwind CSS with custom theme system
+- **Icons**: Lucide React for modern iconography
+- **Deployment**: Optimized for Vercel/Netlify
+
+## 🚀 Quick Start
 
 ### Prerequisites
-
-- Node.js (version 14 or later)
-- npm (Node Package Manager)
+- Node.js 18+ 
+- npm/yarn/pnpm
 
 ### Installation
 
-1. Clone the repository:
-   ```
-   git clone https://github.com/yourusername/header-hero.git
-   ```
-2. Navigate to the project directory:
-   ```
-   cd header-hero
-   ```
-3. Install the dependencies:
-   ```
-   npm install
-   ```
+```bash
+# Clone the repository
+git clone https://github.com/renedeanda/security-headers-analyzer.git
 
-### Running the Application
+# Navigate to project directory
+cd security-headers-analyzer
 
-To start the development server, run:
-```
+# Install dependencies
+npm install
+
+# Start development server
 npm run dev
 ```
-Open your browser and navigate to `http://localhost:3000` to access the application.
 
-## Contributing
+Open [http://localhost:3000](http://localhost:3000) to view the application.
 
-Contributions are welcome! If you have suggestions for improvements or new features, please open an issue or submit a pull request.
+### Build for Production
 
-## License
+```bash
+# Create optimized production build
+npm run build
 
-This project is licensed under the MIT License. See the LICENSE file for details.
+# Start production server
+npm start
+```
 
-## Acknowledgments
+## 🤝 Contributing
 
-- Inspired by the need for better web security practices.
-- Built with Next.js and Tailwind CSS for a modern web experience.
+We welcome contributions! Here's how you can help:
+
+1. **Fork the repository**
+2. **Create a feature branch**: `git checkout -b feature/amazing-feature`
+3. **Commit your changes**: `git commit -m 'Add amazing feature'`
+4. **Push to the branch**: `git push origin feature/amazing-feature`
+5. **Open a Pull Request**
+
+### Development Guidelines
+- Follow TypeScript best practices
+- Maintain existing code style and formatting
+- Add tests for new features
+- Update documentation as needed
+
+## 📝 License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+## 📞 Support
+
+- **Issues**: [GitHub Issues](https://github.com/renedeanda/security-headers-analyzer/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/renedeanda/security-headers-analyzer/discussions)
+- **Website**: [security.makr.io](https://security.makr.io)
+
+---
+
+<div align="center">
+
+**Made with 💜 by [René DeAnda](https://renedeanda.com)**
+
+</div>
